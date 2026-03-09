@@ -292,10 +292,20 @@ if(urlBetId){const b=loadBet(urlBetId);if(b){state.activeBet=b;state.tab='view'}
 
 // ── Auth state listener ───────────────────────────────────────────────────────
 auth.onAuthStateChanged(user => {
+  const wasLoggedOut = !state.userName;
   if(user){
     state.userName = user.displayName || user.email.split('@')[0];
     state.userPhoto = user.photoURL || '';
     state.userEmail = user.email;
+    // If user just signed in, check for a pending bet to navigate to
+    if(wasLoggedOut){
+      const pendingBet = localStorage.getItem('fb_pending_bet');
+      if(pendingBet){
+        localStorage.removeItem('fb_pending_bet');
+        const b = loadBet(pendingBet);
+        if(b){ state.activeBet=b; state.tab='view'; }
+      }
+    }
   } else {
     state.userName = '';
     state.userPhoto = '';
@@ -306,6 +316,9 @@ auth.onAuthStateChanged(user => {
 });
 
 function signInWithGoogle(){
+  // Save the current bet ID so we can restore it after sign-in
+  const betId = new URLSearchParams(location.search).get('bet');
+  if(betId) localStorage.setItem('fb_pending_bet', betId);
   auth.signInWithPopup(googleProvider).catch(e=>toast('Sign-in failed: '+e.message));
 }
 function signOut(){
