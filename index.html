@@ -197,6 +197,13 @@
     .info-banner{padding:11px 14px;background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.2);border-radius:8px;font-size:13px;color:var(--blue);line-height:1.5;margin-bottom:14px}
     .result-banner{padding:14px 20px;border-radius:10px;margin-bottom:16px;font-weight:600;font-size:15px;background:rgba(232,255,71,.07);border:1px solid rgba(232,255,71,.2);color:var(--accent)}
     .empty{text-align:center;padding:48px 20px;color:var(--muted)}
+    .google-btn{display:inline-flex;align-items:center;gap:12px;background:#fff;color:#1a1a1a;border:1px solid #ddd;font-family:'DM Sans';font-size:15px;font-weight:600;padding:13px 24px;border-radius:10px;cursor:pointer;transition:all .2s;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+    .google-btn:hover{box-shadow:0 4px 16px rgba(0,0,0,.14);transform:translateY(-1px)}
+    .google-btn img{width:22px;height:22px}
+    .auth-wall{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;padding:32px 20px}
+    .auth-wall h2{font-family:'Bebas Neue';font-size:32px;letter-spacing:1px;margin-bottom:10px}
+    .auth-wall p{color:var(--muted);font-size:15px;margin-bottom:28px;max-width:360px;line-height:1.6}
+    .user-avatar{width:32px;height:32px;border-radius:50%;object-fit:cover;border:2px solid var(--accent)}
     .empty-icon{font-size:44px;margin-bottom:14px;opacity:.35}
     .back-btn{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:13px;font-weight:600;background:none;border:none;cursor:pointer;padding:0;margin-bottom:20px;transition:color .2s;font-family:'DM Sans'}
     .back-btn:hover{color:var(--text)}
@@ -212,12 +219,29 @@
       .share-url-row{flex-direction:column}
     }
   </style>
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 </head>
 <body>
 <div id="app"></div>
 <div id="toast" class="toast"></div>
 
 <script>
+// ── Firebase Init ─────────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyD_OoDTx-KLapm_uZ6u0SAX4s42aM6wWUc",
+  authDomain: "flashbet-53ab0.firebaseapp.com",
+  projectId: "flashbet-53ab0",
+  storageBucket: "flashbet-53ab0.firebasestorage.app",
+  messagingSenderId: "1034655482039",
+  appId: "1:1034655482039:web:766241fa1c1822177a0d32",
+  measurementId: "G-P7GNQ1EWCR"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const googleProvider = new firebase.auth.GoogleAuthProvider();
+
 // ── Storage ───────────────────────────────────────────────────────────────────
 const DB = {
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}},
@@ -255,13 +279,38 @@ let state = {
   tab: 'home',
   bets: loadAllBets(),
   activeBet: null,
-  userName: localStorage.getItem('fb_name')||'',
+  userName: '',
+  userPhoto: '',
+  userEmail: '',
+  authReady: false,
   pendingNameCb: null,
 };
 
 // Check URL for bet param
 const urlBetId = new URLSearchParams(location.search).get('bet');
 if(urlBetId){const b=loadBet(urlBetId);if(b){state.activeBet=b;state.tab='view'}}
+
+// ── Auth state listener ───────────────────────────────────────────────────────
+auth.onAuthStateChanged(user => {
+  if(user){
+    state.userName = user.displayName || user.email.split('@')[0];
+    state.userPhoto = user.photoURL || '';
+    state.userEmail = user.email;
+  } else {
+    state.userName = '';
+    state.userPhoto = '';
+    state.userEmail = '';
+  }
+  state.authReady = true;
+  render();
+});
+
+function signInWithGoogle(){
+  auth.signInWithPopup(googleProvider).catch(e=>toast('Sign-in failed: '+e.message));
+}
+function signOut(){
+  auth.signOut().then(()=>{toast('Signed out');render()});
+}
 
 function setState(patch){Object.assign(state,patch);render()}
 
@@ -277,6 +326,7 @@ function setTab(t,bet){
 // ── Require Name ──────────────────────────────────────────────────────────────
 function requireName(cb){
   if(state.userName){cb(state.userName);return}
+  // Not signed in — show sign-in prompt for placing bets
   showNameModal(cb)
 }
 
@@ -284,10 +334,23 @@ function requireName(cb){
 function render(){
   const app = qs('#app');
   app.innerHTML='';
+  if(!state.authReady){
+    const loading=el('div');
+    loading.style.cssText='display:flex;align-items:center;justify-content:center;min-height:100vh;font-size:32px';
+    loading.textContent='⚡';
+    app.appendChild(loading);
+    return;
+  }
   app.appendChild(renderHeader());
   const main=el('div');
   if(state.tab==='home')main.appendChild(renderHome());
-  else if(state.tab==='create')main.appendChild(renderCreate());
+  else if(state.tab==='create'){
+    if(!state.userName){
+      main.appendChild(renderAuthWall('You need to be signed in to create a bet.'));
+    } else {
+      main.appendChild(renderCreate());
+    }
+  }
   else if(state.tab==='bets')main.appendChild(renderAllBets());
   else if(state.tab==='view'&&state.activeBet)main.appendChild(renderBetView(state.activeBet));
   app.appendChild(main);
@@ -313,6 +376,20 @@ function renderHeader(){
   }
   h.appendChild(nav);
   return h;
+}
+
+// ── Auth Wall ────────────────────────────────────────────────────────────────
+function renderAuthWall(msg){
+  const d=el('div','auth-wall');
+  d.innerHTML=`
+    <div style="font-size:48px;margin-bottom:16px">🔐</div>
+    <h2>Sign In to Continue</h2>
+    <p>${msg||'Create an account to start making bets with your friends.'}</p>`;
+  const btn=el('button','google-btn');
+  btn.innerHTML='<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"> Sign in with Google';
+  btn.onclick=signInWithGoogle;
+  d.appendChild(btn);
+  return d;
 }
 
 // ── Home ──────────────────────────────────────────────────────────────────────
@@ -348,11 +425,33 @@ function renderHome(){
 
 function renderAllBets(){
   const d=el('div');
-  d.appendChild(el('div','sec-title','All Bets'));
-  if(!state.bets.length){const e=el('div','empty');e.innerHTML='<div class="empty-icon">📭</div><p>No bets yet!</p>';d.appendChild(e);}
-  const grid=el('div','bets-grid');
-  state.bets.forEach(b=>{grid.appendChild(renderBetRow(b))});
-  d.appendChild(grid);
+  // If logged in, show My Bets + All Bets tabs
+  if(state.userName){
+    const myBets=state.bets.filter(b=>b.creator===state.userName);
+    const otherBets=state.bets.filter(b=>b.creator!==state.userName);
+
+    if(myBets.length){
+      d.appendChild(el('div','sec-title','My Bets'));
+      const g1=el('div','bets-grid');
+      myBets.forEach(b=>g1.appendChild(renderBetRow(b)));
+      d.appendChild(g1);
+    }
+    if(otherBets.length){
+      d.appendChild(el('div','sec-title',myBets.length?'Other Bets':'All Bets'));
+      const g2=el('div','bets-grid');
+      otherBets.forEach(b=>g2.appendChild(renderBetRow(b)));
+      d.appendChild(g2);
+    }
+    if(!state.bets.length){
+      const e=el('div','empty');e.innerHTML='<div class="empty-icon">📭</div><p>No bets yet — create the first one!</p>';d.appendChild(e);
+    }
+  } else {
+    d.appendChild(el('div','sec-title','All Bets'));
+    if(!state.bets.length){const e=el('div','empty');e.innerHTML='<div class="empty-icon">📭</div><p>No bets yet!</p>';d.appendChild(e);}
+    const grid=el('div','bets-grid');
+    state.bets.forEach(b=>{grid.appendChild(renderBetRow(b))});
+    d.appendChild(grid);
+  }
   return d;
 }
 
