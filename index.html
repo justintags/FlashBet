@@ -1169,7 +1169,7 @@ function renderFriends(){
 
   // Friend bets feed
   if(state.friendBets.length){
-    d.appendChild(el('div','sec-title','Friends' Bets'));
+    d.appendChild(el('div','sec-title',"Friends' Bets"));
     const grid=el('div','bets-grid');
     state.friendBets.forEach(b=>grid.appendChild(renderBetRow(b)));
     d.appendChild(grid);
