@@ -292,7 +292,33 @@ let state = {
 
 // Check URL for bet param
 const urlBetId = new URLSearchParams(location.search).get('bet');
-if(urlBetId){const b=loadBet(urlBetId);if(b){state.activeBet=b;state.tab='view'}}
+if(urlBetId){
+  const b=loadBet(urlBetId);
+  if(b){state.activeBet=b;state.tab='view'}
+  // Will also try Firestore after auth is ready (see loadBetFromFirestore)
+}
+
+async function loadBetFromFirestore(betId){
+  try {
+    const doc = await db.collection('bets').doc(betId).get();
+    if(doc.exists){
+      const bet = {id:doc.id, ...doc.data()};
+      saveBet(bet); // cache locally
+      // Also load placements
+      const placesSnap = await db.collection('placements')
+        .where('betId','==',betId).get();
+      placesSnap.docs.forEach(d=>{
+        const p={...d.data()};
+        savePlace(betId, p);
+      });
+      state.activeBet=bet;
+      state.tab='view';
+      render();
+    } else {
+      toast('Bet not found');
+    }
+  } catch(e){ console.warn('Firestore bet load error:', e.message); }
+}
 
 // ── Auth state listener ───────────────────────────────────────────────────────
 auth.onAuthStateChanged(user => {
@@ -333,7 +359,13 @@ auth.onAuthStateChanged(user => {
     state.userEmail = '';
   }
   state.authReady = true;
-  render();
+  // If opened via share link and bet not in local storage, load from Firestore
+  if(urlBetId && !state.activeBet){
+    render(); // show loading first
+    loadBetFromFirestore(urlBetId);
+  } else {
+    render();
+  }
 });
 
 function signInWithGoogle(){
@@ -950,6 +982,8 @@ function renderBetView(bet){
           placedAt:Date.now()
         };
         savePlace(bet.id,p);
+        // Sync placement to Firestore
+        try { db.collection('placements').doc(p.id).set(p); } catch(e){}
         selectedSide=null;
         // Show payment instructions if creator has handles set
         if(bet.venmoHandle||bet.cashappHandle){
