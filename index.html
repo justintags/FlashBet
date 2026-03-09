@@ -792,6 +792,20 @@ function renderBetView(bet){
     placeBetCard.innerHTML='';
     const ct=el('div','card-title');ct.innerHTML='<div class="dot"></div>Place Your Bet';
     placeBetCard.appendChild(ct);
+
+    // Require sign-in before placing
+    if(!state.userName){
+      const signinWrap=el('div');
+      signinWrap.style.cssText='display:flex;flex-direction:column;align-items:center;gap:14px;padding:16px 0;text-align:center';
+      signinWrap.innerHTML=`<p style="color:var(--muted);font-size:14px;margin:0">Sign in with your Google account so we know who's placing the bet.</p>`;
+      const btn=el('button','google-btn');
+      btn.innerHTML='<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"> Sign in with Google';
+      btn.onclick=signInWithGoogle;
+      signinWrap.appendChild(btn);
+      placeBetCard.appendChild(signinWrap);
+      return;
+    }
+
     if(!selectedSide){
       placeBetCard.appendChild(el('p','',`<span style="color:var(--muted)">Tap a side above to place your bet</span>`));
       return;
