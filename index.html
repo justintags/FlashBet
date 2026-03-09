@@ -314,14 +314,16 @@ auth.onAuthStateChanged(user => {
       // Handle incoming friend request
       if(friendEmail && friendName && friendEmail !== state.userEmail){
         (async()=>{
-          const existing = await db.collection('friends')
-            .where('userEmail','==',state.userEmail)
-            .where('friendEmail','==',friendEmail).get();
-          if(existing.empty){
-            showFriendRequestModal(friendEmail, friendName);
-          } else {
-            toast('You are already friends with '+friendName);
-          }
+          try {
+            const existing = await db.collection('friends')
+              .where('userEmail','==',state.userEmail)
+              .where('friendEmail','==',friendEmail).get();
+            if(existing.empty){
+              showFriendRequestModal(friendEmail, friendName);
+            } else {
+              toast('You are already friends with '+friendName);
+            }
+          } catch(e){ console.warn('Friend check error:', e.message); }
         })();
       }
     }
@@ -365,35 +367,40 @@ function requireName(cb){
 // ── Friends (Firestore) ──────────────────────────────────────────────────────
 async function loadFriends(){
   if(!state.userEmail) return;
-  const snap = await db.collection('friends')
-    .where('userEmail','==',state.userEmail).get();
-  state.friends = snap.docs.map(d=>d.data());
-  // Load friend bets from Firestore
-  const allBetSnaps = await Promise.all(
-    state.friends.map(f=>db.collection('bets').where('creatorEmail','==',f.friendEmail).get())
-  );
-  state.friendBets = allBetSnaps.flatMap(s=>s.docs.map(d=>({id:d.id,...d.data()})));
-  render();
+  try {
+    const snap = await db.collection('friends')
+      .where('userEmail','==',state.userEmail).get();
+    state.friends = snap.docs.map(d=>d.data());
+    const allBetSnaps = await Promise.all(
+      state.friends.map(f=>db.collection('bets').where('creatorEmail','==',f.friendEmail).get())
+    );
+    state.friendBets = allBetSnaps.flatMap(s=>s.docs.map(d=>({id:d.id,...d.data()})));
+    render();
+  } catch(e) {
+    console.warn('Firestore error (check rules):', e.message);
+  }
 }
 
 async function syncBetToFirestore(bet){
   if(!state.userEmail) return;
-  await db.collection('bets').doc(bet.id).set({
-    ...bet,
-    creatorEmail: state.userEmail,
-    creatorName: state.userName,
-  });
+  try {
+    await db.collection('bets').doc(bet.id).set({
+      ...bet,
+      creatorEmail: state.userEmail,
+      creatorName: state.userName,
+    });
+  } catch(e){ console.warn('Sync error:', e.message); }
 }
 
 async function acceptFriendRequest(requesterEmail, requesterName){
   const myEmail = state.userEmail;
   const myName = state.userName;
-  // Add friend to my list
-  await db.collection('friends').add({userEmail:myEmail, userName:myName, friendEmail:requesterEmail, friendName:requesterName, since:Date.now()});
-  // Add me to their list
-  await db.collection('friends').add({userEmail:requesterEmail, userName:requesterName, friendEmail:myEmail, friendName:myName, since:Date.now()});
-  toast('✅ Friend added: '+requesterName);
-  loadFriends();
+  try {
+    await db.collection('friends').add({userEmail:myEmail, userName:myName, friendEmail:requesterEmail, friendName:requesterName, since:Date.now()});
+    await db.collection('friends').add({userEmail:requesterEmail, userName:requesterName, friendEmail:myEmail, friendName:myName, since:Date.now()});
+    toast('✅ Friend added: '+requesterName);
+    loadFriends();
+  } catch(e){ toast('Error adding friend — check Firestore rules'); console.error(e); }
 }
 
 function generateFriendLink(){
