@@ -468,6 +468,7 @@ function render(){
   }
   else if(state.tab==='bets')main.appendChild(renderAllBets());
   else if(state.tab==='friends')main.appendChild(state.userName?renderFriends():renderAuthWall('Sign in to see your friends.'));
+  else if(state.tab==='feed')main.appendChild(state.userName?renderFeed():renderAuthWall('Sign in to see your friends\' bets.'));
   else if(state.tab==='view'&&state.activeBet)main.appendChild(renderBetView(state.activeBet));
   app.appendChild(main);
 }
@@ -480,7 +481,7 @@ function renderHeader(){
   logo.onclick=()=>setTab('home');
   h.appendChild(logo);
   const nav=el('div','nav');
-  [['home','Home'],['create','+ New Bet'],['bets','All Bets'],['friends','Friends']].forEach(([t,label])=>{
+  [['home','Home'],['create','+ New Bet'],['bets','All Bets'],['feed','Feed'],['friends','Friends']].forEach(([t,label])=>{
     const b=el('button','nav-btn'+(state.tab===t?' active':''),label);
     b.onclick=()=>setTab(t);
     nav.appendChild(b);
@@ -824,6 +825,7 @@ function renderCreate(){
           };
           saveBet(bet);
           state.bets=[bet,...state.bets];
+          syncBetToFirestore(bet).then(()=>console.log('Bet synced to Firestore')).catch(e=>console.error('Sync failed:',e));
           toast('Bet created! 🎉');
           setTab('view',bet);
         });
@@ -1132,6 +1134,46 @@ function renderSettlePanel(bet,totalPool,isPool){
   },0);
 
   return card;
+}
+
+// ── Feed UI ──────────────────────────────────────────────────────────────────
+function renderFeed(){
+  const d=el('div');
+  d.appendChild(el('div','sec-title','Friends\' Feed'));
+
+  if(!state.friends.length){
+    const empty=el('div','card');
+    empty.style.cssText='text-align:center;padding:40px 20px';
+    empty.innerHTML=`<div style="font-size:40px;margin-bottom:12px">👥</div>
+      <div style="font-weight:600;font-size:16px;margin-bottom:8px">No friends yet</div>
+      <div style="color:var(--muted);font-size:14px;margin-bottom:20px">Add friends to see their bets here automatically.</div>`;
+    const btn=el('button','btn btn-primary');
+    btn.textContent='Go to Friends →';
+    btn.onclick=()=>setTab('friends');
+    empty.appendChild(btn);
+    d.appendChild(empty);
+    return d;
+  }
+
+  // My bets + friend bets combined, sorted by newest
+  const allBets=[...loadAllBets(),...state.friendBets]
+    .filter((b,i,arr)=>arr.findIndex(x=>x.id===b.id)===i) // dedupe
+    .sort((a,z)=>z.createdAt-a.createdAt);
+
+  if(!allBets.length){
+    const e=el('div','empty');
+    e.innerHTML='<div class="empty-icon">📭</div><p>No bets yet from your group!</p>';
+    d.appendChild(e);
+    return d;
+  }
+
+  const grid=el('div','bets-grid');
+  allBets.forEach(b=>{
+    const row=renderBetRow(b);
+    grid.appendChild(row);
+  });
+  d.appendChild(grid);
+  return d;
 }
 
 // ── Friends UI ───────────────────────────────────────────────────────────────
