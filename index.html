@@ -375,6 +375,9 @@ function signInWithGoogle(){
   auth.signInWithPopup(googleProvider).catch(e=>toast('Sign-in failed: '+e.message));
 }
 function signOut(){
+  unsubscribeAll();
+  state.friends=[];
+  state.friendBets=[];
   auth.signOut().then(()=>{toast('Signed out');render()});
 }
 
@@ -397,20 +400,79 @@ function requireName(cb){
 }
 
 // ── Friends (Firestore) ──────────────────────────────────────────────────────
-async function loadFriends(){
+// Track active Firestore listeners so we can clean them up on sign out
+let firestoreUnsubs = [];
+
+function unsubscribeAll(){
+  firestoreUnsubs.forEach(fn=>{ try{fn()}catch(e){} });
+  firestoreUnsubs = [];
+}
+
+function loadFriends(){
   if(!state.userEmail) return;
-  try {
-    const snap = await db.collection('friends')
-      .where('userEmail','==',state.userEmail).get();
-    state.friends = snap.docs.map(d=>d.data());
-    const allBetSnaps = await Promise.all(
-      state.friends.map(f=>db.collection('bets').where('creatorEmail','==',f.friendEmail).get())
-    );
-    state.friendBets = allBetSnaps.flatMap(s=>s.docs.map(d=>({id:d.id,...d.data()})));
-    render();
-  } catch(e) {
-    console.warn('Firestore error (check rules):', e.message);
-  }
+  unsubscribeAll();
+
+  // Listen to friends list in real time
+  const unsub1 = db.collection('friends')
+    .where('userEmail','==',state.userEmail)
+    .onSnapshot(async snap => {
+      try {
+        state.friends = snap.docs.map(d=>d.data());
+
+        // For each friend, listen to their bets in real time
+        // First unsubscribe old bet listeners (keep only friends listener)
+        firestoreUnsubs.slice(1).forEach(fn=>{ try{fn()}catch(e){} });
+        firestoreUnsubs = [firestoreUnsubs[0]];
+
+        if(state.friends.length === 0){
+          state.friendBets = [];
+          render();
+          return;
+        }
+
+        // Use a single query per friend email
+        const friendEmails = state.friends.map(f=>f.friendEmail);
+        // Firestore 'in' supports up to 10 values
+        const chunks = [];
+        for(let i=0;i<friendEmails.length;i+=10) chunks.push(friendEmails.slice(i,i+10));
+
+        let allFriendBets = [];
+        chunks.forEach(chunk => {
+          const unsub = db.collection('bets')
+            .where('creatorEmail','in',chunk)
+            .onSnapshot(betSnap => {
+              const chunkBets = betSnap.docs.map(d=>({id:d.id,...d.data()}));
+              // Merge with existing friend bets (replace chunk's bets)
+              allFriendBets = [
+                ...allFriendBets.filter(b=>!chunk.includes(b.creatorEmail)),
+                ...chunkBets
+              ];
+              state.friendBets = allFriendBets.sort((a,z)=>z.createdAt-a.createdAt);
+              render();
+            }, e=>console.warn('Friend bets listener error:', e.message));
+          firestoreUnsubs.push(unsub);
+        });
+
+      } catch(e){ console.warn('Friends listener error:', e.message); }
+    }, e=>console.warn('Firestore friends error:', e.message));
+
+  firestoreUnsubs.push(unsub1);
+
+  // Also listen to placements on bets we care about in real time
+  // (for when someone places a bet on YOUR bet)
+  const unsub2 = db.collection('placements')
+    .where('creatorEmail','==',state.userEmail)
+    .onSnapshot(snap => {
+      // Refresh the active bet if it's being viewed
+      if(state.activeBet){
+        db.collection('placements').where('betId','==',state.activeBet.id)
+          .get().then(s=>{
+            s.docs.forEach(d=>savePlace(state.activeBet.id, d.data()));
+            render();
+          }).catch(()=>{});
+      }
+    }, e=>{});
+  firestoreUnsubs.push(unsub2);
 }
 
 async function syncBetToFirestore(bet){
@@ -421,6 +483,7 @@ async function syncBetToFirestore(bet){
       creatorEmail: state.userEmail,
       creatorName: state.userName,
     });
+    console.log('Bet synced:', bet.id);
   } catch(e){ console.warn('Sync error:', e.message); }
 }
 
@@ -469,7 +532,20 @@ function render(){
   else if(state.tab==='bets')main.appendChild(renderAllBets());
   else if(state.tab==='friends')main.appendChild(state.userName?renderFriends():renderAuthWall('Sign in to see your friends.'));
   else if(state.tab==='feed')main.appendChild(state.userName?renderFeed():renderAuthWall('Sign in to see your friends\' bets.'));
-  else if(state.tab==='view'&&state.activeBet)main.appendChild(renderBetView(state.activeBet));
+  else if(state.tab==='view'&&state.activeBet){
+    main.appendChild(renderBetView(state.activeBet));
+    // Real-time placement updates for this bet
+    if(state.userName && state.activeBet){
+      db.collection('placements').where('betId','==',state.activeBet.id)
+        .onSnapshot(snap=>{
+          snap.docs.forEach(d=>savePlace(state.activeBet.id,d.data()));
+          if(state.tab==='view'&&state.activeBet){
+            main.innerHTML='';
+            main.appendChild(renderBetView(state.activeBet));
+          }
+        }, ()=>{});
+    }
+  }
   app.appendChild(main);
 }
 
@@ -985,7 +1061,12 @@ function renderBetView(bet){
         };
         savePlace(bet.id,p);
         // Sync placement to Firestore
-        try { db.collection('placements').doc(p.id).set(p); } catch(e){}
+        try { 
+          db.collection('placements').doc(p.id).set({
+            ...p,
+            creatorEmail: bet.creatorEmail || ''
+          }); 
+        } catch(e){}
         selectedSide=null;
         // Show payment instructions if creator has handles set
         if(bet.venmoHandle||bet.cashappHandle){
