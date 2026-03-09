@@ -436,7 +436,7 @@ async function acceptFriendRequest(requesterEmail, requesterName){
 }
 
 function generateFriendLink(){
-  const base = location.href.split('?')[0];
+  const base = 'https://flash-bet.vercel.app/';
   return base+'?addfriend='+encodeURIComponent(state.userEmail)+'&name='+encodeURIComponent(state.userName);
 }
 
@@ -845,7 +845,7 @@ function renderBetView(bet){
   const totalA=placements.filter(p=>p.side==='A').reduce((s,p)=>s+p.wager,0);
   const totalB=placements.filter(p=>p.side==='B').reduce((s,p)=>s+p.wager,0);
   const totalPool=totalA+totalB;
-  const shareUrl=(location.href.split('?')[0])+'?bet='+bet.id;
+  const shareUrl='https://flash-bet.vercel.app/?bet='+bet.id;
 
   // Back
   const back=el('button','back-btn','← Back');
